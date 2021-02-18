@@ -45,6 +45,124 @@ __device__ int found = 0;
 __device__ int out_of_memory = 0;
 __device__ char result_path[RESULT_LEN];
 
+// Rewrite A* to take in a MAPF object
+void astar_gpu_mapf(mapf m, std::fstream &output) 
+{
+	// need to do preprocessing work for mapf
+	
+	// modifying pathfinding_read_input
+
+	rows_cpu = m.get_y();
+	cols_cpu = m.get_x();
+
+	// Start and end positions
+	// I'm assuming this has something to do with mapf goals
+
+	std::string s_tmp = "";
+	std::string t_tmp = "";
+
+	std::vector<std::pair<int, int>> goals = m.get_goals();
+	for(std::vector<std::pair<int, int>>::const_iterator it = goals.begin(); it != goals.end(); ++it) {
+		s_tmp += to_string(it->first) + ',' + to_string(it->second);
+		++it;
+		t_tmp += to_string(it->first) + ',' + to_string(it->second);
+	}
+
+	// Wants them as C-strings
+	char* s_out = s_tmp.c_str();
+	char* t_out = t_tmp.c_str();
+
+	// Add obstacles to board
+	std::vector<std::pair<int, int>> obstacles = m.get_obstacles();
+
+	for(std::vector<std::pair<int, int>>::const_iterator it = obstacles.begin(); it != obstacles.end(); ++it) {
+		board_cpu[it->first][it->second] = -1;
+	}
+
+	// Cells that have connections with weights creater than 1,2
+	// Not sure if this is applicable to us
+
+	char *s_gpu, *t_gpu;
+	int k = THREADS_PER_BLOCK * BLOCKS;
+	expand_fun expand_fun_cpu;
+	heur_fun h_cpu;
+	states_delta_fun states_delta_cpu;
+	int expand_elements;
+	int expand_element_size;
+
+	auto start = std::chrono::high_resolution_clock::now();
+	pathfinding_preprocessing(s_out, t_out, &s_gpu, &t_gpu, &expand_fun_cpu, &h_cpu, &states_delta_cpu,
+			&expand_elements, &expand_element_size);
+
+	state **H;
+	char ***expand_buf = expand_bufs_create(THREADS_PER_BLOCK * BLOCKS, expand_elements, expand_element_size);
+	HANDLE_RESULT(cudaMalloc(&H, HASH_SIZE * sizeof(state*)));
+	HANDLE_RESULT(cudaMemset(H, 0, HASH_SIZE * sizeof(state*)));
+	heap **Q = heaps_create(k);
+	list **Ss = lists_create(BLOCKS, 1000000);
+	list *S = list_create(1024 * 1024);
+	state *states_pool;
+	char *nodes_pool;
+	states_pool_create(&states_pool, &nodes_pool, expand_element_size);
+	int total_Q_size_cpu;
+	int found_cpu;
+	int out_of_memory_cpu;
+
+	init_heap<<<1, 1>>>(s_gpu, Q, states_pool, nodes_pool, expand_element_size);
+	int step = 0;
+	do {
+		clear_list<<<1, 1>>>(S);
+		HANDLE_RESULT(cudaDeviceSynchronize());
+		fill_list<<<BLOCKS, THREADS_PER_BLOCK>>>(t_gpu, k, expand_element_size, Q, S, states_pool, nodes_pool,
+				expand_buf, expand_fun_cpu, h_cpu, states_delta_cpu);
+		HANDLE_RESULT(cudaMemcpyFromSymbol(&found_cpu, found, sizeof(int)));
+		HANDLE_RESULT(cudaMemcpyFromSymbol(&out_of_memory, found, sizeof(int)));
+		if (found_cpu) break;
+		if (out_of_memory_cpu) break;
+		HANDLE_RESULT(cudaDeviceSynchronize());
+		deduplicate<<<BLOCKS, THREADS_PER_BLOCK>>>(H, S, t_gpu, h_cpu);
+		HANDLE_RESULT(cudaDeviceSynchronize());
+		push_to_queues<<<1, THREADS_PER_BLOCK>>>(t_gpu, k, Q, S, h_cpu, step) ;
+		HANDLE_RESULT(cudaDeviceSynchronize());
+		HANDLE_RESULT(cudaMemcpyFromSymbol(&total_Q_size_cpu, total_Q_size, sizeof(int)));
+		step++;
+	} while (total_Q_size_cpu > 0);
+
+	auto end = std::chrono::high_resolution_clock::now();
+
+	auto duration = end - start;
+	output << std::chrono::duration_cast<std::chrono::milliseconds>(duration).count() << "\n";
+
+	if (found_cpu) {
+		char result_path_cpu[RESULT_LEN];
+		HANDLE_RESULT(cudaMemcpyFromSymbol(result_path_cpu, result_path, RESULT_LEN));
+
+		std::string path_str = std::string(result_path_cpu);
+		std::istringstream path_stream;
+		path_stream.str(result_path_cpu);
+
+		std::vector<std::string> v;
+		for (std::string line; std::getline(path_stream, line); ) {
+			v.push_back(line);
+		}
+		std::reverse(v.begin(), v.end());
+		if (version == SLIDING) {
+			output << sliding_puzzle_postprocessing(v);
+		} else if (version == PATHFINDING) {
+			for (std::string path_el: v) {
+				output << path_el << "\n";
+			}
+		}
+	}
+
+	states_pool_destroy(states_pool, nodes_pool);
+	lists_destroy(Ss, BLOCKS);
+	heaps_destroy(Q, k);
+	HANDLE_RESULT(cudaFree(H));
+	HANDLE_RESULT(cudaDeviceSynchronize());
+
+}
+
 void astar_gpu(const char *s_in, const char *t_in, version_value version, std::fstream &output) {
 	char *s_gpu, *t_gpu;
 	int k = THREADS_PER_BLOCK * BLOCKS;

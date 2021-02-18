@@ -12,6 +12,8 @@ enum version_value {
 typedef void(*expand_fun)(const char *x, char **result);
 typedef int(*heur_fun)(const char *x, const char *t);
 typedef int(*states_delta_fun)(const char *src, const char *dst);
+// To support the new A* for mapf
+void astar_gpu_mapf(mapf m, std::fstream &output);
 void astar_gpu(const char *s_in, const char *t_in, version_value version, std::fstream &output);
 
 struct state {

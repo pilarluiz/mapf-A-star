@@ -1,0 +1,9 @@
+[submodule "library/fmt"]
+	path = library/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "library/cxxopts"]
+	path = library/cxxopts
+	url = https://github.com/jarro2783/cxxopts.git
+[submodule "library/robin-hood-hashing"]
+	path = library/robin-hood-hashing
+	url = https://github.com/martinus/robin-hood-hashing.git

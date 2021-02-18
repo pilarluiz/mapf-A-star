@@ -46,7 +46,7 @@ __device__ int out_of_memory = 0;
 __device__ char result_path[RESULT_LEN];
 
 // Rewrite A* to take in a MAPF object
-void astar_gpu_mapf(mapf m, std::fstream &output) 
+void astar_gpu_mapf(mapf m, std::vector<std::pair<int, int> > starts, std::fstream &output) 
 {
 	// need to do preprocessing work for mapf
 	
@@ -63,9 +63,11 @@ void astar_gpu_mapf(mapf m, std::fstream &output)
 
 	std::vector<std::pair<int, int>> goals = m.get_goals();
 	for(std::vector<std::pair<int, int>>::const_iterator it = goals.begin(); it != goals.end(); ++it) {
-		s_tmp += to_string(it->first) + ',' + to_string(it->second);
-		++it;
 		t_tmp += to_string(it->first) + ',' + to_string(it->second);
+	}
+
+	for(std::vector<std::pair<int, int>>::const_iterator it = starts.begin(); it != starts.end(); ++it) {
+		s_tmp += to_string(it->first) + ',' + to_string(it->second);
 	}
 
 	// Wants them as C-strings
